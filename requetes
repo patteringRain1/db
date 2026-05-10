@@ -1,0 +1,170 @@
+/* Determine the 10 countries with the most purchases; list the names of these countries, as well
+as the number of purchases; sort the results in decreasing order of purchases.
+*/
+
+select c.name, Count(pur.id) as cnt
+from Purchases as pur
+join Province as pro on pur.province = pro.rowid
+join Country as c on c.code = pro.country
+group by c.name
+order by cnt desc 
+limit 10;
+
+/* Determine the total number of purchases for each product. List the number of the product, as
+well as the total number of purchases.
+*/
+
+select pur.product, Count(pur.id) as cnt
+from Purchases as pur
+group by pur.product;
+
+
+/* Determine for each country the province in which the total number of purchases of product
+0 is the highest; list the name of the country, the name of the province, and the number of
+purchases, both absolute and as a proportion of the total number of purchases in that country
+*/
+
+With ProvinceCounts AS (
+-- on compte le nombre d'achats du produit 0 pour chaque province
+    select c.name as country, pro.name as province, COUNT(pur.id) as cnt
+    from Purchases as pur
+    join Province as pro on pro.rowid = pur.province
+    join Country as c on c.code = pro.country
+    where pur.product = 0
+    group by c.name, pro.name),
+CountryTotals AS (
+-- on compte le nombre d'achats du produit ° pour chaque pays
+    select country, SUM(cnt) as total_cnt
+    from ProvinceCounts
+    group by country)
+-- on assemble le tout pour trouver le max et calcul la proportion
+    select pc.country, pc.province, MAX(pc.cnt) as abs, CAST(MAX(pc.cnt) as FLOAT) / ct.total_cnt as prop
+    from ProvinceCounts as pc
+    join CountryTotals as ct on ct.country = pc.country
+    group by pc.country;
+    
+/* List for each continent and each possible number of items per purchase (in the range 1...10),
+the corresponding number of purchases. Only consider countries that are 100% located in their
+respective continents.
+*/
+
+select e.continent as name, pur.qty, Count(pur.id) as cnt
+from Purchases as pur
+join Province as pro on pro.rowid = pur.province
+join Country as c on c.code = pro.country
+join Encompasses as e on e.country = c.code
+where pur.qty BETWEEN 1 AND 10 and e.percentage = 100
+group by e.continent, pur.qty;
+
+/* Determine the total number of purchases for each product. List the number of the product, as
+well as the total number of purchases
+*/
+
+select pur.product, Count(pur.id) as cnt
+from Purchases as pur 
+group by pur.product;
+
+
+/*
+Determine the total number of purchases for each of the last ten days. List the date, as well as
+the total number of purchases.*/
+
+select time, Count(id) as cnt
+from Purchases
+group by time
+order by time desc
+limit 10;
+
+
+/*Determine the identifiers of purchases performed in Brabant on the last day present in the
+database.
+*/
+
+select pur.id
+from Purchases as pur
+join Province as pro on pur.province = pro.rowid
+where pro.name = 'Brabant'
+and pur.time = (select max(time) from Purchases);
+
+
+/*
+Determine the identifiers of purchases performed in Vienna on the last day present in the
+database*/
+
+select pur.id
+from Purchases as pur
+join Province as pro on pur.province = pro.rowid
+where pro.name = 'Vienna'
+and pur.time = (select max(time) from Purchases);
+
+/*
+List for each continent and each possible number of items per purchase (in the range 1...10),
+the corresponding number of purchases. Only consider countries that are 100% located in their
+respective continents. Note that the difference with the earlier question is that we only consider
+the last 10 days.*/
+
+WITH LastTenDays AS (
+    select time
+    from Purchases 
+    group by time 
+    order by time desc 
+    limit 10
+)
+select 
+    e.continent as name, 
+    pur.qty, 
+    COUNT(pur.id) as cnt
+from Purchases as pur
+join Province as pro on pur.province = pro.rowid
+join Country as c on c.code = pro.country
+join Encompasses as e on e.country = c.code
+where pur.qty between 1 and 10
+  and e.percentage = 100
+  and pur.time in (select time from LastTenDays)
+group by e.continent, pur.qty;
+
+/*
+List the top-10 of provinces for which the difference between the total number of items in
+purchases of the last 10 days and the preceding period of 10 days is the largest (i.e., the
+increase is large; we do not look for the largest decreases); list the full name of the province,
+the full name of the country, and the number of purchases in the last 10 days, as well as in the
+preceding period of 10 days; order the results by the size of the difference. Note that if there is
+no preceding period, the outcome is supposed to be empty
+*/
+
+WITH RecentDays AS (
+    select time
+    from Purchases 
+    group by time 
+    order by time desc 
+    limit 20
+),
+Last10 AS (
+    select time 
+    from RecentDays 
+    limit 10
+),
+Prec10 AS (
+    select time
+    from RecentDays 
+    limit 10 
+    offset 10
+),
+Stats AS (
+    select pur.province,
+        SUM(case when pur.time in (select time from Last10) then pur.qty else 0 end) as items_last,
+        SUM(case when pur.time in (select time from Prec10) then pur.qty else 0 end) as items_prec,
+        COUNT(case when pur.time in (select time from Last10) then pur.id end) as pur_last,
+        COUNT(case when pur.time in (select time from Prec10) then pur.id end) as pur_prec
+    from Purchases as pur
+    where pur.time in (select time from RecentDays)
+    group by pur.province
+)
+select pro.name as province, c.name as country, s.pur_last as qty_last10, s.pur_prec as qty_1020
+from Stats as s
+join Province as pro on s.province = pro.rowid
+join Country as c on c.code = pro.country
+where (select COUNT(*) from Prec10) > 0 
+and (s.items_last - s.items_prec) > 0
+order by (s.items_last - s.items_prec) desc
+limit 10;
