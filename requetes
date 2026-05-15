@@ -1,4 +1,8 @@
-/* Determine the 10 countries with the most purchases; list the names of these countries, as well
+/*
+QUERIES DONT CONSIDER TIME
+*/
+
+/* 1) Determine the 10 countries with the most purchases; list the names of these countries, as well
 as the number of purchases; sort the results in decreasing order of purchases.
 */
 
@@ -10,7 +14,27 @@ group by c.name
 order by cnt desc 
 limit 10;
 
-/* Determine the total number of purchases for each product. List the number of the product, as
+/*
+Version optimisée
+
+
+On utilise TimeProvinceProductCountSum pour ne plus compter toutes les 
+lignes de Purchases. On additionne directement purchase_count.
+On utilise aussi ProvinceCountry pour éviter de refaire le join Province - Country.
+*/
+
+select prov.country_name, 
+SUM(t.purchase_count) as cnt
+from TimeProvinceProductCountSum AS t
+JOIN ProvinceCountry AS prov
+ON t.province = prov.province_id
+Group by prov.country_name
+order by cnt desc
+limit 10;
+
+
+
+/* 2) Determine the total number of purchases for each product. List the number of the product, as
 well as the total number of purchases.
 */
 
@@ -18,8 +42,19 @@ select pur.product, Count(pur.id) as cnt
 from Purchases as pur
 group by pur.product;
 
+/*
+Version optimisée
 
-/* Determine for each country the province in which the total number of purchases of product
+On remplace count sur Purchases par SUM(purchase_count) 
+sur TimeProvinceProductCountSum. Cela évite de parcourir toute la table des achats.
+*/
+
+SELECT product, SUM(purchase_count) as cnt
+from TimeProvinceProductCountSum 
+group by product; 
+
+
+/* 3) Determine for each country the province in which the total number of purchases of product
 0 is the highest; list the name of the country, the name of the province, and the number of
 purchases, both absolute and as a proportion of the total number of purchases in that country
 */
@@ -42,8 +77,43 @@ CountryTotals AS (
     from ProvinceCounts as pc
     join CountryTotals as ct on ct.country = pc.country
     group by pc.country;
+
+
+/*
+Version optimisée
+
+
+On utilise TimeProvinceProductCountSum pour obtenir plus vite le nombre d’achats 
+du produit 0 par province. ProvinceCountry permet d’obtenir directement 
+le nom du pays et de la province.
+*/
+
+WITH ProvinceCounts AS (
+    select 
+    prov.country_name as country,
+    prov.province_name as province, 
+    SUM(t.purchase_count) as cnt
+    from TimeProvinceProductCountSum as t
+    join ProvinceCountry as prov
+    on t.province = prov.province_id
+    where t.product = 0
+    group by prov.country_name, prov.province_name
+
+),
+CountryTotals AS (
+    select country, SUM(cnt) as total_cnt
+    from ProvinceCounts
+    group by country)
+    select pc.country, pc.province, MAX(pc.cnt) as abs, CAST(MAX(pc.cnt) as FLOAT) / ct.total_cnt as prop
+    from ProvinceCounts as pc
+    join CountryTotals as ct on ct.country = pc.country
+    group by pc.country;
+
+
+
+
     
-/* List for each continent and each possible number of items per purchase (in the range 1...10),
+/* 4) List for each continent and each possible number of items per purchase (in the range 1...10),
 the corresponding number of purchases. Only consider countries that are 100% located in their
 respective continents.
 */
@@ -56,16 +126,84 @@ join Encompasses as e on e.country = c.code
 where pur.qty BETWEEN 1 AND 10 and e.percentage = 100
 group by e.continent, pur.qty;
 
-/* Determine the total number of purchases for each product. List the number of the product, as
+/*
+Version optimisée
+
+On utilise TimeProvinceQty, qui contient déjà le nombre d’achats par jour,
+province et quantité. On évite donc de recompter directement dans Purchases. 
+ProvinceCountry est utilisé pour rejoindre plus facilement avec Encompasses.
+*/
+
+select e.continent as name, t.qty, SUM(t.purchase_count) AS cnt
+from TimeProvinceQty as t
+
+join ProvinceCountry as pc
+on t.province = pc.province_id
+
+join Encompasses AS e 
+on e.country = pc.country_code
+
+where e.percentage = 100
+
+group by e.continent, t.qty;
+
+
+/*
+QUERIES THAT CONSIDER THE LAST TEN DAYS
+*/
+
+
+/* 5) Determine the total number of purchases for each product. List the number of the product, as
 well as the total number of purchases
 */
 
+
+/*   old CHUQUI
 select pur.product, Count(pur.id) as cnt
 from Purchases as pur 
+group by pur.product;
+*/
+
+WITH LastTenDays AS (
+    SELECT DISTINCT time 
+    from Purchases
+    order by time DESC
+    limit 10
+)
+
+SELECT pur.product, count(*) as cnt
+from Purchases as pur
+where pur.time in (
+    select time 
+    from LastTenDays
+)
 group by pur.product;
 
 
 /*
+Version optimisée
+
+Même idée que q2, mais seulement pour les 10 derniers jours. 
+On utilise TimeProvinceProductCountSum et on additionne purchase_count.
+*/
+
+WITH LastTenDays AS (
+    SELECT DISTINCT time 
+    from TimeProvinceProductCountSum
+    order by time DESC
+    limit 10
+)
+SELECT product, SUM(purchase_count) as cnt
+from TimeProvinceProductCountSum 
+WHERE time IN (
+    select time 
+    from LastTenDays
+)
+group by product;
+
+
+
+/* 6)
 Determine the total number of purchases for each of the last ten days. List the date, as well as
 the total number of purchases.*/
 
@@ -75,9 +213,29 @@ group by time
 order by time desc
 limit 10;
 
+/*
+Version optimisée
 
-/*Determine the identifiers of purchases performed in Brabant on the last day present in the
+On utilise TimeProvinceProductCountSum pour calculer le nombre d’achats par jour avec 
+SUM(purchase_count), au lieu de compter les lignes de Purchases.
+
+*/
+
+select time, SUM(purchase_count) as cnt
+from TimeProvinceProductCountSum 
+group by time
+order by time desc
+limit 10;
+
+
+/*7) Determine the identifiers of purchases performed in Brabant on the last day present in the
 database.
+*/
+/*
+Version optimisée (c'est la même)
+
+L’optimisation vient surtout de l’index sur time et 
+de l’index (time, province).
 */
 
 select pur.id
@@ -87,9 +245,18 @@ where pro.name = 'Brabant'
 and pur.time = (select max(time) from Purchases);
 
 
-/*
+
+/* 8)
 Determine the identifiers of purchases performed in Vienna on the last day present in the
 database*/
+
+
+/*
+Version optimisée (c'est la même)
+
+Les index aident à trouver plus vite les achats du dernier jour.
+*/
+
 
 select pur.id
 from Purchases as pur
@@ -97,7 +264,9 @@ join Province as pro on pur.province = pro.rowid
 where pro.name = 'Vienna'
 and pur.time = (select max(time) from Purchases);
 
-/*
+
+
+/* 9)
 List for each continent and each possible number of items per purchase (in the range 1...10),
 the corresponding number of purchases. Only consider countries that are 100% located in their
 respective continents. Note that the difference with the earlier question is that we only consider
@@ -124,6 +293,47 @@ where pur.qty between 1 and 10
 group by e.continent, pur.qty;
 
 /*
+Version optimisée
+
+On utilise TimeProvinceQty, comme pour q4, mais en filtrant seulement les 
+10 derniers jours. Cela évite de regrouper directement les achats individuels.
+
+*/
+
+WITH LastTenDays AS (
+    select distinct time
+    from TimeProvinceQty
+    order by time desc 
+    limit 10
+)
+
+select 
+    e.continent as name, 
+    t.qty,
+    sum(t.purchase_count) as cnt 
+from TimeProvinceQty as t
+join ProvinceCountry as pc
+on t.province = pc.province_id
+
+join Encompasses as e
+on e.country = pc.country_code
+
+where e.percentage = 100
+
+and t.time in (
+    select time 
+    from LastTenDays
+)
+
+Group by e.continent, t.qty;
+
+
+
+/*
+QUERY THAT INVOLVES TIMES
+
+*/
+/*  10)
 List the top-10 of provinces for which the difference between the total number of items in
 purchases of the last 10 days and the preceding period of 10 days is the largest (i.e., the
 increase is large; we do not look for the largest decreases); list the full name of the province,
@@ -168,3 +378,149 @@ where (select COUNT(*) from Prec10) > 0
 and (s.items_last - s.items_prec) > 0
 order by (s.items_last - s.items_prec) desc
 limit 10;
+
+
+/*
+Version optimisée
+
+On utilise TimeProvinceProductCountSum pour comparer les quantités vendues 
+dans les 10 derniers jours et les 10 jours précédents.
+Au lieu de faire SUM(qty) sur Purchases, on fait SUM(total_qty) sur une table déjà agrégée.
+*/
+
+
+WITH RecentDays AS (
+    select time
+    from Purchases 
+    group by time 
+    order by time desc 
+    limit 20
+),
+Last10 AS (
+    select time 
+    from RecentDays 
+    limit 10
+),
+Prec10 AS (
+    select time
+    from RecentDays 
+    limit 10 
+    offset 10
+),
+Stats AS (
+    select t.province,
+        SUM(case when t.time in (select time from Last10) then t.total_qty else 0 end) as items_last,
+        SUM(case when t.time in (select time from Prec10) then t.total_qty else 0 end) as items_prec,
+        SUM(case when t.time in (select time from Last10) then t.purchase_count else 0 end) as pur_last,
+        SUM(case when t.time in (select time from Prec10) then t.purchase_count else 0 end) as pur_prec
+    from TimeProvinceProductCountSum  as t
+    where t.time in (select time from RecentDays)
+    group by t.province
+)
+select pro.name as province, c.name as country, s.pur_last as qty_last10, s.pur_prec as qty_1020
+from Stats as s
+join Province as pro on s.province = pro.rowid
+join Country as c on c.code = pro.country
+where (select COUNT(*) from Prec10) > 0 
+and (s.items_last - s.items_prec) > 0
+order by (s.items_last - s.items_prec) desc
+limit 10;
+
+
+
+
+/*
+E0
+
+Optimize the mondial database. The statements given here will be executed at 
+the beginning of the evaluation script. Here, you are expected to add statements 
+for creating indexes and additional tables, based on the given ones
+in the mondial databases; these additional tables and indexes should help to
+answer the later queries faster.
+*/
+
+
+/*
+pur_time_index : Index sur Purchases(time). Il aide les requêtes qui cherchent 
+les derniers jours ou le dernier jour présent dans la base.
+*/
+CREATE INDEX pur_time_index ON Purchases(time);
+
+
+/* ProvinceCountry : Table auxiliaire qui fait le lien entre province et pays. 
+Elle évite de refaire souvent le join entre Province et Country
+
+province_country_index : Index sur ProvinceCountry(province_id). 
+Il rend le join entre les achats et ProvinceCountry plus rapide.
+*/
+DROP TABLE IF EXISTS ProvinceCountry;
+
+CREATE TABLE ProvinceCountry as 
+select 
+    pro.rowid as province_id, 
+    pro.name as province_name, 
+    cty.code as country_code,
+    cty.name as country_name
+from Province as pro 
+join Country as cty
+on cty.code = pro.country;
+
+CREATE INDEX province_country_index on ProvinceCountry(province_id);
+
+
+/*
+purchases_time_province_index : Index sur Purchases(time, province). Il aide surtout les requêtes 
+qui filtrent par temps puis par province, comme q7 et q8.
+*/
+CREATE INDEX purchases_time_province_index ON Purchases(time, province);
+
+
+
+
+/*
+E1...
+
+Optimize the full database (mondial + Purchases). We will be adding batches 
+of purchases to the initial empty database. After each batch of purchases is added,
+you may wish to (re)recreate tables based on these purchases (with corresponding indexes),
+in order to allow later queries to be executed more efficiently. 
+Write queries for (re)creating such tables based on purchases here.
+
+
+TimeProvinceProductCountSum et TimeProvinceQty
+*/
+
+/*
+
+TimeProvinceProductCountSum : Table agrégée par time, province et product. Elle stocke déjà le nombre 
+d’achats et la quantité totale. Elle sert surtout à q1, q2, q3, q5, q6 et q10.
+
+*/
+DROP TABLE IF EXISTS TimeProvinceProductCountSum; 
+
+CREATE TABLE TimeProvinceProductCountSum as 
+select 
+    time,
+    province, 
+    product,
+    COUNT(*) as purchase_count, 
+    SUM(qty) as total_qty
+FROM Purchases
+GROUP BY time, province, product;
+
+
+/*
+TimeProvinceQty : Table agrégée par time, province et qty. Elle sert surtout à q4 et q9,
+car ces deux requêtes regroupent les achats par continent et par quantité achetée.
+*/
+DROP TABLE IF EXISTS TimeProvinceQty;
+
+create table TimeProvinceQty as 
+select 
+time,
+province,
+qty,
+count(*) as purchase_count
+from Purchases 
+where qty between 1 and 10
+group by time, province, qty;
